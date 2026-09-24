@@ -7,18 +7,19 @@ export interface ChatMessage {
 
 export interface ChatOptions {
   /** Single-turn prompt. Ignored when `messages` is provided. */
-  prompt?: string;
+  prompt?: string | undefined;
   /** Multi-turn history (alternating user/assistant). */
-  messages?: ChatMessage[];
-  systemPrompt?: string;
+  messages?: ChatMessage[] | undefined;
+  systemPrompt?: string | undefined;
   /** Override the provider default model. */
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
+  model?: string | undefined;
+  temperature?: number | undefined;
+  maxTokens?: number | undefined;
   /** When true, `chat()` resolves to an async iterable of text chunks. */
-  stream?: boolean;
-  signal?: AbortSignal;
+  stream?: boolean | undefined;
+  signal?: AbortSignal | undefined;
 }
+
 
 export interface ChatResult {
   provider: Provider;
