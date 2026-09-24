@@ -18,8 +18,16 @@ export const Route = createFileRoute("/api/chat")({
       POST: async ({ request }) => {
         const apiKey = process.env["AI_PROVIDER_API_KEY"];
         if (!apiKey) {
-          return Response.json({ error: "AI_PROVIDER_API_KEY is not configured." }, { status: 500 });
+          // Missing configuration is a client-visible setup state, not a server crash.
+          return Response.json(
+            {
+              error:
+                "No provider key configured yet. Save a Gemini, OpenAI, Groq or Anthropic key as AI_PROVIDER_API_KEY to start chatting.",
+            },
+            { status: 400 },
+          );
         }
+
 
         let input: z.infer<typeof Body>;
         try {
