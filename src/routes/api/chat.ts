@@ -71,10 +71,13 @@ export const Route = createFileRoute("/api/chat")({
             },
           });
         } catch (error) {
-          const status = error instanceof AIGatewayError ? (error.status ?? 500) : 500;
+          // Upstream/provider problems surface as 502 so they read as an
+          // integration failure the UI can show, not an app crash.
+          const status = error instanceof AIGatewayError ? (error.status ?? 502) : 502;
           const message = error instanceof Error ? error.message : "Unknown error";
           return Response.json({ error: message }, { status });
         }
+
       },
     },
   },
