@@ -67,8 +67,16 @@ function Index() {
 
       if (!res.ok || !res.body) {
         const detail = await res.text().catch(() => "");
-        throw new Error(detail || `Request failed (${res.status})`);
+        let message = detail || `Request failed (${res.status})`;
+        try {
+          const parsed = JSON.parse(detail) as { error?: string };
+          if (parsed.error) message = parsed.error;
+        } catch {
+          // non-JSON body: keep the raw text
+        }
+        throw new Error(message);
       }
+
 
       setMeta({
         provider: res.headers.get("X-AI-Provider") ?? "unknown",
