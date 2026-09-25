@@ -181,7 +181,7 @@ function Index() {
         <section className="space-y-2 text-sm text-muted-foreground">
           <h2 className="text-lg font-medium text-foreground">Defaults per provider</h2>
           <ul className="space-y-1 font-mono text-xs">
-            <li>google → gemini-1.5-flash</li>
+            <li>google → gemini-flash-latest</li>
             <li>openai → gpt-4o-mini</li>
             <li>groq → llama-3.3-70b-versatile</li>
             <li>anthropic → claude-3-5-haiku-latest</li>

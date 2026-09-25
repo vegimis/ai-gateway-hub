@@ -1,7 +1,7 @@
 import type { ChatMessage, ChatOptions, Provider } from "./types";
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
-  google: "gemini-1.5-flash",
+  google: "gemini-flash-latest",
   openai: "gpt-4o-mini",
   groq: "llama-3.3-70b-versatile",
   anthropic: "claude-3-5-haiku-latest",
