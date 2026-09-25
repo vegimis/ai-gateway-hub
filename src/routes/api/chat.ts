@@ -16,18 +16,21 @@ export const Route = createFileRoute("/api/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const apiKey = process.env["AI_PROVIDER_API_KEY"];
-        if (!apiKey) {
+        let gateway: ReturnType<typeof createGateway>;
+        try {
+          // Key comes from env automatically (AI_PROVIDER_API_KEY, GEMINI_API_KEY, ...).
+          gateway = createGateway();
+        } catch {
           // Missing configuration is a client-visible setup state, not a server crash.
           return Response.json(
             {
               error:
                 "No provider key configured yet. Save a Gemini, OpenAI, Groq or Anthropic key as AI_PROVIDER_API_KEY to start chatting.",
+              code: "missing_key",
             },
             { status: 400 },
           );
         }
-
 
         let input: z.infer<typeof Body>;
         try {
@@ -35,8 +38,6 @@ export const Route = createFileRoute("/api/chat")({
         } catch {
           return Response.json({ error: "Invalid request body." }, { status: 400 });
         }
-
-        const gateway = createGateway({ apiKey });
 
         try {
           if (!input.stream) {

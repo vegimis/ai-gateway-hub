@@ -1,4 +1,5 @@
 import { detectProvider, detectProviderFromKey } from "./detect";
+import { ENV_KEYS, ENV_MODEL, defaultEnv, resolveKeyFromEnv } from "./keys";
 import { DEFAULT_MODELS, buildRequest } from "./providers";
 import { sseEvents } from "./stream";
 import {
@@ -10,8 +11,17 @@ import {
   type Provider,
 } from "./types";
 
-export { AIGatewayError, DEFAULT_MODELS, detectProvider, detectProviderFromKey };
+export {
+  AIGatewayError,
+  DEFAULT_MODELS,
+  ENV_KEYS,
+  ENV_MODEL,
+  detectProvider,
+  detectProviderFromKey,
+  resolveKeyFromEnv,
+};
 export type {
+  AIGatewayErrorCode,
   ChatMessage,
   ChatOptions,
   ChatResult,
@@ -22,31 +32,58 @@ export type {
 
 export interface Gateway {
   readonly provider: Promise<Provider>;
+  /** Where the key came from: "config" or the env variable name. */
+  readonly keySource: string;
   chat(options: ChatOptions & { stream: true }): Promise<ChatStream>;
   chat(options: ChatOptions & { stream?: false }): Promise<ChatResult>;
 }
 
 /**
- * Creates a provider-agnostic chat client from a single API key.
+ * Creates a provider-agnostic chat client.
+ * Key: `config.apiKey`, else `config.env`, else `process.env` (see ENV_KEYS).
  * Provider and default model are discovered automatically.
  */
-export function createGateway(config: GatewayConfig): Gateway {
+export function createGateway(config: GatewayConfig = {}): Gateway {
   const fetchImpl = config.fetch ?? fetch;
-  const apiKey = config.apiKey?.trim();
-  if (!apiKey) throw new AIGatewayError("Missing API key.", 401);
+  const env = config.env ?? defaultEnv();
 
-  const providerPromise: Promise<Provider> = config.provider
-    ? Promise.resolve(config.provider)
-    : detectProvider(apiKey, fetchImpl);
+  let apiKey = config.apiKey?.trim();
+  let keySource = "config";
+  let pinned: Provider | undefined = config.provider;
+  if (!apiKey) {
+    const found = resolveKeyFromEnv(env);
+    if (found) {
+      apiKey = found.apiKey;
+      keySource = found.source;
+      pinned ??= found.provider;
+    }
+  }
+  if (!apiKey) {
+    throw new AIGatewayError(
+      `Missing API key. Pass { apiKey } or set one of: ${ENV_KEYS.map((k) => k.name).join(", ")}.`,
+      401,
+      undefined,
+      "missing_key",
+    );
+  }
+  const key = apiKey;
+  const envModel = env[ENV_MODEL]?.trim() || undefined;
+  const maxAttempts = Math.max(1, config.maxAttempts ?? 3);
+
+  const providerPromise: Promise<Provider> = pinned
+    ? Promise.resolve(pinned)
+    : detectProvider(key, fetchImpl);
+  // Avoid unhandled rejections if detection fails before chat() is called.
+  providerPromise.catch(() => {});
 
   async function chat(options: ChatOptions): Promise<ChatResult | ChatStream> {
     const provider = await providerPromise;
-    const model = options.model ?? config.model ?? DEFAULT_MODELS[provider];
-    const req = buildRequest(provider, apiKey!, model, options);
+    const model = options.model ?? config.model ?? envModel ?? DEFAULT_MODELS[provider];
+    const req = buildRequest(provider, key, model, options);
 
     // Bounded retry for transient provider overload (429 / 5xx).
     let res: Response;
-    for (let attempt = 0; ; attempt++) {
+    for (let attempt = 1; ; attempt++) {
       res = await fetchImpl(req.url, {
         method: "POST",
         headers: req.headers,
@@ -54,10 +91,11 @@ export function createGateway(config: GatewayConfig): Gateway {
         ...(options.signal ? { signal: options.signal } : {}),
       });
       const transient = res.status === 429 || res.status >= 500;
-      if (!transient || attempt >= 2) break;
+      if (!transient || attempt >= maxAttempts) break;
       await res.body?.cancel().catch(() => {});
       const retryAfter = Number(res.headers.get("retry-after"));
-      const delay = retryAfter > 0 ? retryAfter * 1000 : 800 * 2 ** attempt + Math.random() * 300;
+      const delay =
+        retryAfter > 0 ? retryAfter * 1000 : 800 * 2 ** (attempt - 1) + Math.random() * 300;
       await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
     }
 
@@ -75,7 +113,9 @@ export function createGateway(config: GatewayConfig): Gateway {
       return { provider, model, text: req.parseFull(json) };
     }
 
-    if (!res.body) throw new AIGatewayError("Provider returned no stream body.", 502, provider);
+    if (!res.body) {
+      throw new AIGatewayError("Provider returned no stream body.", 502, provider, "no_stream");
+    }
     const body = res.body;
 
     async function* textStream() {
@@ -95,20 +135,16 @@ export function createGateway(config: GatewayConfig): Gateway {
     return { provider, model, textStream: textStream() };
   }
 
-  return { provider: providerPromise, chat: chat as Gateway["chat"] };
+  return { provider: providerPromise, keySource, chat: chat as Gateway["chat"] };
 }
 
-/** One-shot convenience: `chat({ apiKey, prompt })` without holding a client. */
-export async function chat(
-  options: ChatOptions & { apiKey: string; provider?: Provider; stream: true },
-): Promise<ChatStream>;
-export async function chat(
-  options: ChatOptions & { apiKey: string; provider?: Provider; stream?: false },
-): Promise<ChatResult>;
-export async function chat(
-  options: ChatOptions & { apiKey: string; provider?: Provider },
-): Promise<ChatResult | ChatStream> {
-  const { apiKey, provider, ...rest } = options;
-  const gateway = createGateway({ apiKey, ...(provider ? { provider } : {}) });
+type OneShot = ChatOptions & Pick<GatewayConfig, "apiKey" | "env" | "provider" | "fetch">;
+
+/** One-shot convenience: `chat({ prompt })` — key from options or env. */
+export async function chat(options: OneShot & { stream: true }): Promise<ChatStream>;
+export async function chat(options: OneShot & { stream?: false }): Promise<ChatResult>;
+export async function chat(options: OneShot): Promise<ChatResult | ChatStream> {
+  const { apiKey, env, provider, fetch: f, ...rest } = options;
+  const gateway = createGateway({ apiKey, env, provider, fetch: f });
   return (gateway.chat as (o: ChatOptions) => Promise<ChatResult | ChatStream>)(rest);
 }

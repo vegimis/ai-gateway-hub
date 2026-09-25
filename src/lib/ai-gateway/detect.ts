@@ -58,5 +58,5 @@ export async function detectProvider(
       // network hiccup on one candidate should not abort detection
     }
   }
-  throw new AIGatewayError("Could not determine the provider for this API key.", 400);
+  throw new AIGatewayError("Could not determine the provider for this API key.", 400, undefined, "detection_failed");
 }
