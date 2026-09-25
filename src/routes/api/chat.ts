@@ -71,11 +71,19 @@ export const Route = createFileRoute("/api/chat")({
             },
           });
         } catch (error) {
-          // Upstream/provider problems surface as 502 so they read as an
-          // integration failure the UI can show, not an app crash.
-          const status = error instanceof AIGatewayError ? (error.status ?? 502) : 502;
-          const message = error instanceof Error ? error.message : "Unknown error";
-          return Response.json({ error: message }, { status });
+          // Provider problems (overload, bad key, quota) are upstream state, not an
+          // app crash: return 424 Failed Dependency with a readable message.
+          const upstream = error instanceof AIGatewayError ? error.status : undefined;
+          const status =
+            upstream === 401 || upstream === 403 || upstream === 400 || upstream === 404
+              ? upstream
+              : 424;
+          const raw = error instanceof Error ? error.message : "Unknown error";
+          const message =
+            upstream === 503 || upstream === 429
+              ? "The AI provider is busy right now. Please try again in a minute."
+              : raw;
+          return Response.json({ error: message, upstreamStatus: upstream ?? null }, { status });
         }
 
       },
