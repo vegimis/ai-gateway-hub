@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- AI gateway lives in `src/lib/ai-gateway/` with zero deps (fetch + web streams only) — so it can be copied into any project/runtime unchanged.
+- Gateway key resolution: config.apiKey > config.env > process.env (ENV_KEYS in keys.ts) — one convention across all apps.

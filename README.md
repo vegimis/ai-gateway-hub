@@ -27,3 +27,9 @@ npm run dev
 - TypeScript
 - React
 - Tailwind CSS
+
+## AI Gateway library
+
+This project contains `@your-name/ai-gateway` — one `chat()` call for Gemini, OpenAI, Groq
+and Anthropic, with the key read from env (`AI_PROVIDER_API_KEY`) or passed directly.
+Full docs: [src/lib/ai-gateway/README.md](src/lib/ai-gateway/README.md).
