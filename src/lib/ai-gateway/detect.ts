@@ -13,7 +13,7 @@ export function detectProviderFromKey(apiKey: string): Provider | null {
   if (!key) return null;
   if (key.startsWith("sk-ant-")) return "anthropic";
   if (key.startsWith("gsk_")) return "groq";
-  if (key.startsWith("AIza")) return "google";
+  if (key.startsWith("AIza") || key.startsWith("AQ.")) return "google";
   if (key.startsWith("sk-")) return "openai";
   return null;
 }
