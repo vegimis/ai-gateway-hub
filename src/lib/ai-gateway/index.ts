@@ -44,12 +44,22 @@ export function createGateway(config: GatewayConfig): Gateway {
     const model = options.model ?? config.model ?? DEFAULT_MODELS[provider];
     const req = buildRequest(provider, apiKey!, model, options);
 
-    const res = await fetchImpl(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: JSON.stringify(req.body),
-      ...(options.signal ? { signal: options.signal } : {}),
-    });
+    // Bounded retry for transient provider overload (429 / 5xx).
+    let res: Response;
+    for (let attempt = 0; ; attempt++) {
+      res = await fetchImpl(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: JSON.stringify(req.body),
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+      const transient = res.status === 429 || res.status >= 500;
+      if (!transient || attempt >= 2) break;
+      await res.body?.cancel().catch(() => {});
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const delay = retryAfter > 0 ? retryAfter * 1000 : 800 * 2 ** attempt + Math.random() * 300;
+      await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
