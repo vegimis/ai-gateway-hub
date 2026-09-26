@@ -46,6 +46,10 @@ function isH3SwallowedErrorBody(body: string): boolean {
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    // Fire-and-forget AI boot check (runs once, never throws, never blocks).
+    void import("./lib/ai-gateway/startup")
+      .then((m) => m.startupCheck())
+      .catch((e) => console.warn("[ai-gateway] startup check skipped:", e));
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
