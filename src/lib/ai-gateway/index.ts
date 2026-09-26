@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "./types";
 
+export { startupCheck, type StartupReport } from "./startup";
 export {
   AIGatewayError,
   DEFAULT_MODELS,

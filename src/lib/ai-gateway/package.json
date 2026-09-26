@@ -1,0 +1,10 @@
+{
+  "name": "@your-name/ai-gateway",
+  "version": "1.0.0",
+  "description": "Zero-dependency, one-key AI chat for Gemini, OpenAI, Groq and Anthropic.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": { ".": "./index.ts", "./startup": "./startup.ts" },
+  "sideEffects": false,
+  "license": "MIT"
+}
