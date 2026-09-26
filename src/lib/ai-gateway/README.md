@@ -213,3 +213,26 @@ headers `X-AI-Provider` / `X-AI-Model` show what answered. Errors are JSON
 - Keys stay on the server; the browser only talks to your own endpoint
 - Never commit `.env`; rotate any key that was pasted into chat or logs
 - Add rate limiting / auth to your endpoint before going public
+
+---
+
+## Plug & go: startup check
+
+Call once when your app starts (or on first request in Workers). The AI itself answers — the
+reply you see in the logs is generated live, not hard-coded. It never throws.
+
+```ts
+import { startupCheck } from "@/lib/ai-gateway";
+startupCheck(); // or startupCheck({ apiKey, env })
+```
+
+Console output:
+
+```
+[ai-gateway] key found (AI_PROVIDER_API_KEY) → provider: google. Asking the AI to say hello…
+[ai-gateway] ✅ active — provider: google, model: gemini-flash-latest, key: AI_PROVIDER_API_KEY (812ms)
+[ai-gateway] 🤖 AI says: "Hello developer! I'm Gemini, a model by Google."
+```
+
+On failure (no key, bad key, provider busy) it logs a `⚠️` warning and the app keeps running.
+Returns `{ ok, provider, model, keySource, reply, error, ms }`.
