@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { AIGatewayError, createGateway } from "@/lib/ai-gateway";
+import { AIGatewayError, PROVIDER_IDS, createGateway } from "@/lib/ai-gateway";
 
 const Body = z.object({
   prompt: z.string().min(1),
   systemPrompt: z.string().optional(),
-  model: z.string().optional(),
+  model: z.string().max(200).optional(),
+  provider: z.enum(PROVIDER_IDS as [string, ...string[]]).optional(),
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().positive().optional(),
   stream: z.boolean().optional(),
@@ -16,22 +17,6 @@ export const Route = createFileRoute("/api/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        let gateway: ReturnType<typeof createGateway>;
-        try {
-          // Key comes from env automatically (AI_PROVIDER_API_KEY, GEMINI_API_KEY, ...).
-          gateway = createGateway();
-        } catch {
-          // Missing configuration is a client-visible setup state, not a server crash.
-          return Response.json(
-            {
-              error:
-                "No provider key configured yet. Save a Gemini, OpenAI, Groq or Anthropic key as AI_PROVIDER_API_KEY to start chatting.",
-              code: "missing_key",
-            },
-            { status: 400 },
-          );
-        }
-
         let input: z.infer<typeof Body>;
         try {
           input = Body.parse(await request.json());
@@ -39,13 +24,30 @@ export const Route = createFileRoute("/api/chat")({
           return Response.json({ error: "Invalid request body." }, { status: 400 });
         }
 
+        let gateway: ReturnType<typeof createGateway>;
+        try {
+          // Key comes from env automatically (AI_PROVIDER_API_KEY, GEMINI_API_KEY, ...).
+          gateway = createGateway(input.provider ? { provider: input.provider as never } : {});
+        } catch {
+          // Missing configuration is a client-visible setup state, not a server crash.
+          return Response.json(
+            {
+              error:
+                "No provider key configured yet. Save a key from any supported AI service as AI_PROVIDER_API_KEY to start chatting.",
+              code: "missing_key",
+            },
+            { status: 400 },
+          );
+        }
+
+        const { provider: _p, ...opts } = input;
         try {
           if (!input.stream) {
-            const result = await gateway.chat({ ...input, stream: false });
+            const result = await gateway.chat({ ...opts, stream: false });
             return Response.json(result);
           }
 
-          const { provider, model, textStream } = await gateway.chat({ ...input, stream: true });
+          const { provider, model, textStream } = await gateway.chat({ ...opts, stream: true });
           const encoder = new TextEncoder();
           const body = new ReadableStream<Uint8Array>({
             async start(controller) {
