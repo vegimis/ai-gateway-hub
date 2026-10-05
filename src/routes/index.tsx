@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { DEFAULT_MODELS, PROVIDERS, PROVIDER_IDS } from "@/lib/ai-gateway/providers";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,7 +14,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "A tiny TypeScript gateway that detects whether your key is Gemini, OpenAI, Groq or Anthropic and exposes a single streaming chat() call.",
+          "A tiny TypeScript gateway that detects whether your key is Gemini, OpenAI, Claude, Groq, Mistral, DeepSeek, Grok and more and exposes a single streaming chat() call.",
       },
       { property: "og:title", content: "Unified AI Model Gateway" },
       {
@@ -47,6 +49,17 @@ function Index() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const [info, setInfo] = useState<{ label?: string; defaultModel?: string; models: string[] } | null>(null);
+  const [model, setModel] = useState("");
+
+  useEffect(() => {
+    fetch("/api/models")
+      .then((r) => r.json())
+      .then((d: { label?: string; defaultModel?: string; models?: string[] }) =>
+        setInfo({ ...d, models: d.models ?? [] }),
+      )
+      .catch(() => setInfo({ models: [] }));
+  }, []);
 
   async function run() {
     abortRef.current?.abort();
@@ -61,7 +74,7 @@ function Index() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, systemPrompt, stream: true }),
+        body: JSON.stringify({ prompt, systemPrompt, stream: true, ...(model ? { model } : {}) }),
         signal: controller.signal,
       });
 
@@ -135,6 +148,24 @@ function Index() {
         <section className="space-y-4 rounded-xl border border-border bg-card p-5">
           <h2 className="text-lg font-medium text-card-foreground">Try it</h2>
           <div className="space-y-2">
+            <label className="text-sm text-muted-foreground" htmlFor="model">
+              Model {info?.label ? `(key detected: ${info.label})` : ""}
+            </label>
+            <select
+              id="model"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            >
+              <option value="">Automatic{info?.defaultModel ? ` — ${info.defaultModel}` : ""}</option>
+              {info?.models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
             <label className="text-sm text-muted-foreground" htmlFor="system">
               System prompt
             </label>
@@ -181,10 +212,11 @@ function Index() {
         <section className="space-y-2 text-sm text-muted-foreground">
           <h2 className="text-lg font-medium text-foreground">Defaults per provider</h2>
           <ul className="space-y-1 font-mono text-xs">
-            <li>google → gemini-flash-latest</li>
-            <li>openai → gpt-4o-mini</li>
-            <li>groq → llama-3.3-70b-versatile</li>
-            <li>anthropic → claude-3-5-haiku-latest</li>
+            {PROVIDER_IDS.map((p) => (
+              <li key={p}>
+                {PROVIDERS[p].label} → {DEFAULT_MODELS[p]}
+              </li>
+            ))}
           </ul>
         </section>
       </div>
