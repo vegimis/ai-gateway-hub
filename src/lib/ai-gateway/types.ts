@@ -1,4 +1,16 @@
-export type Provider = "google" | "openai" | "groq" | "anthropic";
+export type Provider =
+  | "google"
+  | "openai"
+  | "anthropic"
+  | "groq"
+  | "xai"
+  | "openrouter"
+  | "perplexity"
+  | "cerebras"
+  | "fireworks"
+  | "mistral"
+  | "deepseek"
+  | "together";
 
 export interface ChatMessage {
   role: "user" | "assistant";

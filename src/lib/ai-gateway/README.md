@@ -1,238 +1,242 @@
-# @your-name/ai-gateway
+# ai-gateway — one key, any AI
 
-One API key in, streaming answers out. A zero-dependency TypeScript library that talks to
-**Google Gemini, OpenAI, Groq and Anthropic** through a single `chat()` call. It detects the
-provider from the key, picks a sensible default model, and normalises streaming so swapping
-providers never changes your app code.
+A tiny, zero-dependency TypeScript library that gives every app the same AI connection.
+You give it **one API key**; it works out which AI service the key belongs to, picks a good
+default model, and answers through a single `chat()` call — streaming or not. Swapping AI
+services never changes your app code.
 
-- Zero dependencies — only `fetch`, `TextDecoder` and web streams
-- Runs on Node.js 18+, Vercel, Firebase Functions, Cloudflare Workers, Deno, Bun
-- Streaming and non-streaming, multi-turn history, system prompts, abort signals
-- Automatic retries on 429 / 5xx with backoff (honours `Retry-After`)
-- Typed errors with stable `code`s
+- Zero dependencies (only `fetch` + web streams) — Node 18+, Vercel, Firebase, Cloudflare Workers, Deno, Bun
+- 12 AI services, detected automatically
+- Model chosen **automatically** or **manually**, and you can list every model your key can use
+- Streaming, multi-turn history, system prompts, cancel, automatic retries on busy/rate-limit
+- A startup check where the AI itself greets you in the logs
+- Typed errors with stable codes
 
-> Server-side only. Never ship a provider key to the browser — call the library from a
-> server function / API route and stream to the client (see "HTTP endpoint").
+> Server-side only. Never put an AI key in browser code. Call the library from your server
+> (API route / server function) and stream the answer to the browser.
 
 ---
 
-## Install / copy into a project
+## 1. What it does, step by step
 
-Copy the `src/lib/ai-gateway/` folder into the new project (files: `index.ts`, `types.ts`,
-`detect.ts`, `keys.ts`, `providers.ts`, `stream.ts`). Import from wherever you placed it:
+```text
+your key ──► detect service ──► pick model ──► send request ──► normalise stream ──► text
+             (key prefix,        (yours, env,    (right URL,       (same {delta} chunks
+              or live probe)      or default)     headers, body)    for every service)
+```
+
+1. **Find the key** — from your code, an env object, or environment variables.
+2. **Detect the service** — from the key's prefix (instant); if the key has no known prefix,
+   it asks each service's `/models` endpoint which one accepts it.
+3. **Pick the model** — the model you pass, else `AI_PROVIDER_MODEL`, else the service default.
+4. **Call the service** in its own format and turn the reply into plain text chunks.
+5. **Retry** automatically (up to 3 attempts) when the service is busy (429 / 5xx).
+
+## 2. Supported AI services
+
+| Service | Key looks like | Env variable | Default model |
+| --- | --- | --- | --- |
+| Google Gemini | `AIza…` / `AQ.…` | `GEMINI_API_KEY` | `gemini-flash-latest` |
+| OpenAI | `sk-…` / `sk-proj-…` | `OPENAI_API_KEY` | `gpt-6-luna` |
+| Anthropic Claude | `sk-ant-…` | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` |
+| Groq | `gsk_…` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| xAI Grok | `xai-…` | `XAI_API_KEY` | `grok-4.5` |
+| OpenRouter (300+ models) | `sk-or-…` | `OPENROUTER_API_KEY` | `openrouter/auto` |
+| Perplexity | `pplx-…` | `PERPLEXITY_API_KEY` | `sonar` |
+| Cerebras | `csk-…` | `CEREBRAS_API_KEY` | `llama-3.3-70b` |
+| Fireworks | `fw_…` | `FIREWORKS_API_KEY` | `accounts/fireworks/models/llama-v3p3-70b-instruct` |
+| Mistral | no prefix (probed) | `MISTRAL_API_KEY` | `mistral-small-latest` |
+| DeepSeek | `sk-` + 32 hex (probed) | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| Together AI | no prefix (probed) | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` |
+
+Defaults are the fast, low-cost model of each service. Model names change often — use
+`listModels()` (below) to see what your key can use today, and override with `model`.
+
+**Adding a service** is one entry in `PROVIDERS` in `providers.ts` (label, base URL, default
+model, key prefixes, env name). Any service with an OpenAI-compatible API works that way.
+
+---
+
+## 3. Reuse it in another project
+
+The library is one folder: `src/lib/ai-gateway/`
+(`index.ts`, `types.ts`, `providers.ts`, `detect.ts`, `keys.ts`, `stream.ts`, `startup.ts`, `package.json`, `README.md`).
+
+```bash
+# copy the folder into the new project
+cp -r path/to/this-project/src/lib/ai-gateway  path/to/new-project/src/lib/
+
+# or install it as a local package
+npm install ./path/to/ai-gateway        # or: bun add ./path/to/ai-gateway
+```
+
+Nothing else to install. Then:
 
 ```ts
-import { chat, createGateway } from "@/lib/ai-gateway";
+import { chat, createGateway, startupCheck } from "@/lib/ai-gateway"; // or "@your-name/ai-gateway"
 ```
 
 ---
 
-## Giving it a key — 4 ways
+## 4. Entering the key — 4 ways
 
-The key is resolved in this order; the first one found wins.
+Checked in this order; the first one found wins.
 
-### 1. Environment variable (recommended)
+**a) Environment variable (recommended)** — set one, call with no key:
 
-Set any one of these and call the library with no key at all:
+```bash
+AI_PROVIDER_API_KEY=your-key          # any service, auto-detected
+# or a service-specific name, e.g. OPENAI_API_KEY=..., ANTHROPIC_API_KEY=...
+AI_PROVIDER_MODEL=gpt-6-luna          # optional: force a model
+AI_PROVIDER=mistral                   # optional: force the service (skips detection)
+```
 
-| Variable | Provider |
+Where to set it:
+
+| Platform | How |
 | --- | --- |
-| `AI_PROVIDER_API_KEY` | auto-detected (any provider) |
-| `AI_GATEWAY_API_KEY` | auto-detected (any provider) |
-| `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` | Google |
-| `OPENAI_API_KEY` | OpenAI |
-| `GROQ_API_KEY` | Groq |
-| `ANTHROPIC_API_KEY` | Anthropic |
+| Local | `.env` file (never commit it) |
+| Vercel | Project → Settings → Environment Variables |
+| Firebase | `firebase functions:secrets:set AI_PROVIDER_API_KEY` |
+| Cloudflare Workers | `wrangler secret put AI_PROVIDER_API_KEY` |
+| Lovable | Project secrets (ask the agent to "save my AI key") |
 
-Optional: `AI_PROVIDER_MODEL` overrides the default model.
+**b) An env object** (Cloudflare Workers, tests): `createGateway({ env })`
 
-```ts
-const { text } = await chat({ prompt: "Hello" }); // key read from env
-```
+**c) Passed directly** (each user brings their own key): `createGateway({ apiKey: userKey })`
 
-Where to set them:
-- **Local**: `.env` file (`AI_PROVIDER_API_KEY=...`) — never commit it
-- **Vercel**: Project → Settings → Environment Variables
-- **Firebase**: `firebase functions:secrets:set AI_PROVIDER_API_KEY`
-- **Cloudflare Workers**: `wrangler secret put AI_PROVIDER_API_KEY` (see option 2)
-- **Lovable**: Project secrets
-
-### 2. An explicit env object (Cloudflare Workers, tests)
-
-Workers don't always expose `process.env`; pass the binding object instead:
-
-```ts
-export default {
-  async fetch(req: Request, env: Record<string, string>) {
-    const gateway = createGateway({ env });
-    const { text } = await gateway.chat({ prompt: "Hi" });
-    return new Response(text);
-  },
-};
-```
-
-### 3. Pass the key directly
-
-Useful for "bring your own key" apps where each user supplies a key (store it encrypted
-server-side):
-
-```ts
-const gateway = createGateway({ apiKey: userKey });
-```
-
-### 4. Pin the provider
-
-If you already know the provider, skip detection entirely:
-
-```ts
-createGateway({ apiKey, provider: "anthropic", model: "claude-3-5-sonnet-latest" });
-```
-
-`gateway.keySource` tells you where the key came from (`"config"` or the env variable name).
+**d) Pin service and model**: `createGateway({ apiKey, provider: "anthropic", model: "claude-haiku-4-5" })`
 
 ---
 
-## Usage
+## 5. Commands / usage
 
 ```ts
-// One-shot
+// Automatic: service + model detected
 const { text, provider, model } = await chat({ prompt: "Hello" });
 
+// Manual model
+await chat({ prompt: "Hello", model: "gpt-6-luna" });
+
 // Streaming
-const { textStream } = await chat({
-  systemPrompt: "Be brief.",
-  prompt: "Why are cold starts slow?",
-  stream: true,
-});
+const { textStream } = await chat({ systemPrompt: "Be brief.", prompt: "Explain DNS", stream: true });
 for await (const delta of textStream) process.stdout.write(delta);
 
 // Reusable client (detection runs once)
-const gateway = createGateway();
-await gateway.chat({
-  messages: [
-    { role: "user", content: "My name is Ana." },
-    { role: "assistant", content: "Nice to meet you, Ana!" },
-    { role: "user", content: "What's my name?" },
-  ],
-});
+const ai = createGateway();
+console.log(await ai.provider);        // "google"
+console.log(ai.keySource);             // "AI_PROVIDER_API_KEY"
+console.log(await ai.listModels());    // every chat model this key can use
+
+// Conversation history
+await ai.chat({ messages: [
+  { role: "user", content: "My name is Ana." },
+  { role: "assistant", content: "Hi Ana!" },
+  { role: "user", content: "What's my name?" },
+]});
 
 // Cancel
 const ac = new AbortController();
-gateway.chat({ prompt: "Long essay…", stream: true, signal: ac.signal });
+ai.chat({ prompt: "Long essay…", stream: true, signal: ac.signal });
 ac.abort();
 ```
 
-### Options
+### Options for `chat()`
 
-| Option | Type | Notes |
-| --- | --- | --- |
-| `prompt` | `string` | Single-turn prompt |
-| `messages` | `ChatMessage[]` | Multi-turn history; overrides `prompt` |
-| `systemPrompt` | `string` | System instruction |
-| `model` | `string` | Overrides the default |
-| `temperature` | `number` | 0–2 |
-| `maxTokens` | `number` | Output cap |
-| `stream` | `boolean` | Returns `{ textStream }` when true |
-| `signal` | `AbortSignal` | Cancel the request |
+| Option | Notes |
+| --- | --- |
+| `prompt` | Single question |
+| `messages` | Conversation history (overrides `prompt`) |
+| `systemPrompt` | Instructions for the AI |
+| `model` | Manual model; empty = automatic |
+| `temperature` | 0–2 (some reasoning models ignore/reject it) |
+| `maxTokens` | Answer length cap |
+| `stream` | `true` returns `{ textStream }` |
+| `signal` | `AbortSignal` to cancel |
 
 ### `createGateway(config)`
 
 | Field | Notes |
 | --- | --- |
-| `apiKey` | Optional — falls back to env |
+| `apiKey` | Optional, falls back to env |
 | `env` | Env object to read keys from |
 | `provider` | Skip detection |
 | `model` | Default model for this client |
-| `maxAttempts` | Retries for 429/5xx, default `3` (`1` = no retry) |
+| `maxAttempts` | Retries for busy/rate-limit, default 3 (`1` = off) |
 | `fetch` | Custom fetch (tests, proxies) |
 
----
-
-## Provider detection
-
-1. **Key prefix** (instant, free): `sk-ant-` → Anthropic, `gsk_` → Groq,
-   `AIza` / `AQ.` → Google, `sk-` → OpenAI.
-2. **Provider-specific env name** (e.g. `GROQ_API_KEY`) pins the provider.
-3. **Fallback**: a live `GET /models` probe against each provider.
-
-### Default models
-
-| Provider | Default |
-| --- | --- |
-| Google | `gemini-flash-latest` |
-| OpenAI | `gpt-4o-mini` |
-| Groq | `llama-3.3-70b-versatile` |
-| Anthropic | `claude-3-5-haiku-latest` |
-
----
-
-## Errors
-
-Every failure throws `AIGatewayError` with `status`, `provider`, `code` and `retryable`.
-
-| `code` | Meaning |
-| --- | --- |
-| `missing_key` | No key passed and none found in env |
-| `detection_failed` | Key didn't match any provider |
-| `invalid_request` | Bad model name / parameters (400) |
-| `unauthorized` | Key invalid or revoked (401/403) |
-| `not_found` | Model doesn't exist (404) |
-| `rate_limited` | Quota / rate limit (429) — retry later |
-| `overloaded` | Provider busy (503/529) — retry later |
-| `upstream_error` | Other provider failure |
-| `no_stream` | Provider returned no stream body |
-
-```ts
-try {
-  await chat({ prompt: "Hi" });
-} catch (e) {
-  if (e instanceof AIGatewayError && e.retryable) showToast("AI is busy, try again soon");
-  else throw e;
-}
-```
-
----
-
-## HTTP endpoint
-
-`src/routes/api/chat.ts` exposes `POST /api/chat`:
-
-```json
-{ "prompt": "Hi", "systemPrompt": "Be brief", "stream": true }
-```
-
-Streaming responses are SSE frames `data: {"delta":"..."}`, ending with `data: [DONE]`;
-headers `X-AI-Provider` / `X-AI-Model` show what answered. Errors are JSON
-`{ "error": "...", "code": "..." }`. A Vercel `api/chat.ts` or Firebase function can wrap
-`createGateway()` the same way.
-
----
-
-## Security checklist
-
-- Keys stay on the server; the browser only talks to your own endpoint
-- Never commit `.env`; rotate any key that was pasted into chat or logs
-- Add rate limiting / auth to your endpoint before going public
-
----
-
-## Plug & go: startup check
-
-Call once when your app starts (or on first request in Workers). The AI itself answers — the
-reply you see in the logs is generated live, not hard-coded. It never throws.
+### Startup check — the AI greets you
 
 ```ts
 import { startupCheck } from "@/lib/ai-gateway";
-startupCheck(); // or startupCheck({ apiKey, env })
+startupCheck(); // never throws, runs once
 ```
 
-Console output:
-
-```
+```text
 [ai-gateway] key found (AI_PROVIDER_API_KEY) → provider: google. Asking the AI to say hello…
 [ai-gateway] ✅ active — provider: google, model: gemini-flash-latest, key: AI_PROVIDER_API_KEY (812ms)
 [ai-gateway] 🤖 AI says: "Hello developer! I'm Gemini, a model by Google."
 ```
 
-On failure (no key, bad key, provider busy) it logs a `⚠️` warning and the app keeps running.
-Returns `{ ok, provider, model, keySource, reply, error, ms }`.
+No key / bad key / busy service → a `⚠️` warning, and the app keeps running.
+
+---
+
+## 6. HTTP endpoints (in this project)
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /api/chat` | Body `{ prompt, systemPrompt?, model?, provider?, temperature?, maxTokens?, stream? }`. Streaming replies are SSE `data: {"delta":"…"}` ending with `data: [DONE]`; headers `X-AI-Provider` / `X-AI-Model` |
+| `GET /api/models` | `{ provider, label, defaultModel, keySource, models[] }` for the saved key |
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat -H 'content-type: application/json' \
+  -d '{"prompt":"Say hi","stream":true}'
+curl -X POST http://localhost:8080/api/chat -H 'content-type: application/json' \
+  -d '{"prompt":"Say hi","model":"gemini-3.5-flash-lite"}'
+curl http://localhost:8080/api/models
+```
+
+Errors come back as JSON `{ "error": "…" }`: 400 no key / bad input, 401/403 bad key,
+404 unknown model, 424 service busy or failing.
+
+## 7. Testing it on the page
+
+1. Save a key (`AI_PROVIDER_API_KEY`).
+2. Open the home page. The **Model** box shows which service your key was detected as.
+3. Leave it on **Automatic**, or pick any model from the list.
+4. Type a question and press **Send** — the answer streams in, and the service · model used
+   is shown next to the button.
+
+---
+
+## 8. Errors
+
+Every failure throws `AIGatewayError` with `status`, `provider`, `code`, `retryable`.
+
+| `code` | Meaning |
+| --- | --- |
+| `missing_key` | No key passed and none in env |
+| `detection_failed` | Key didn't match any service |
+| `invalid_request` | Bad parameters (400) |
+| `unauthorized` | Key invalid or revoked (401/403) |
+| `not_found` | Model doesn't exist / retired (404) |
+| `rate_limited` | Quota / rate limit (429) |
+| `overloaded` | Service busy (503/529) |
+| `upstream_error` | Other service failure |
+| `no_stream` | Service returned no stream |
+
+---
+
+## 9. Is this all you need from an AI connection?
+
+For **text chat** (questions, assistants, summaries, rewriting, chat widgets) — yes.
+Not included (add later if an app needs them): images, embeddings / vector search,
+speech, tool/function calling, structured JSON output, and per-user rate limiting/auth
+on your endpoint.
+
+## 10. Security checklist
+
+- Keys stay on the server; the browser only talks to your own endpoint
+- Never commit `.env`; rotate any key pasted into chat or logs
+- Add auth / rate limiting to `/api/chat` before going public

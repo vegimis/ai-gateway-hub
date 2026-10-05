@@ -11,3 +11,4 @@
 
 - AI gateway lives in `src/lib/ai-gateway/` with zero deps (fetch + web streams only) — so it can be copied into any project/runtime unchanged.
 - Gateway key resolution: config.apiKey > config.env > process.env (ENV_KEYS in keys.ts) — one convention across all apps.
+- AI provider registry: all services live in PROVIDERS (src/lib/ai-gateway/providers.ts); detection, env names, defaults and model listing derive from it — one place to add a provider.
