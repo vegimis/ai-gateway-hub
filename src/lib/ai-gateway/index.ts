@@ -86,7 +86,7 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
 
   async function chat(options: ChatOptions): Promise<ChatResult | ChatStream> {
     const provider = await providerPromise;
-    const model = options.model?.trim() || config.model ?? envModel ?? DEFAULT_MODELS[provider];
+    const model = (options.model?.trim() || config.model) ?? envModel ?? DEFAULT_MODELS[provider];
     const req = buildRequest(provider, key, model, options);
 
     // Bounded retry for transient provider overload (429 / 5xx).
