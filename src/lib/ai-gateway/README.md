@@ -189,6 +189,103 @@ async function ask(prompt: string) {
 
 ---
 
+## 4b. Plain React + Vite + Firebase (recommended setup)
+
+No framework needed: a Vite React app on **Firebase Hosting** + one **Cloud Function**
+that holds the key. The browser only calls `/api/chat`.
+
+```text
+my-app/
+├─ src/              ← React + Vite (npm create vite@latest my-app -- --template react-ts)
+├─ functions/        ← firebase init functions (TypeScript)
+│  └─ src/index.ts
+└─ firebase.json
+```
+
+**1. Add the library to the function**
+
+```bash
+cd functions
+npm install github:your-name/ai-gateway#v1.1.0 esbuild
+```
+
+The library ships TypeScript source, so bundle the function with esbuild
+(`functions/package.json`):
+
+```json
+"main": "lib/index.js",
+"scripts": {
+  "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --packages=external --external:firebase-functions --external:firebase-admin --outfile=lib/index.js"
+}
+```
+
+Remove `--packages=external` if you want the library inlined (recommended — then it is
+compiled into `lib/index.js`; keep the two firebase `--external` flags).
+Simpler alternative: copy the `ai-gateway` folder into `functions/src/` and import it
+relatively — then the normal `tsc` build works.
+
+**2. The function** (`functions/src/index.ts`)
+
+```ts
+import { onRequest } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
+import { createGateway, startupCheck, AIGatewayError } from "@your-name/ai-gateway";
+
+const AI_KEY = defineSecret("AI_PROVIDER_API_KEY");
+
+export const chat = onRequest({ secrets: [AI_KEY], region: "europe-west1" }, async (req, res) => {
+  startupCheck(); // logs once per instance: "✅ active — provider … model …" + the AI's hello
+  if (req.method !== "POST") { res.status(405).end(); return; }
+  const prompt = String(req.body?.prompt ?? "").slice(0, 8000);
+  if (!prompt) { res.status(400).json({ error: "prompt required" }); return; }
+
+  try {
+    const { textStream } = await createGateway().chat({ prompt, model: req.body?.model, stream: true });
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    for await (const delta of textStream) res.write(delta);
+    res.end();
+  } catch (e) {
+    const status = e instanceof AIGatewayError && e.status < 500 ? e.status : 424;
+    res.status(status).json({ error: (e as Error).message });
+  }
+});
+```
+
+**3. Route `/api/chat` to the function** (`firebase.json`)
+
+```json
+{
+  "hosting": {
+    "public": "dist",
+    "rewrites": [
+      { "source": "/api/chat", "function": { "functionId": "chat", "region": "europe-west1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  },
+  "functions": { "source": "functions", "predeploy": "npm --prefix functions run build" }
+}
+```
+
+**4. Save the key and deploy**
+
+```bash
+firebase functions:secrets:set AI_PROVIDER_API_KEY   # paste any supported key
+npm run build                                        # builds the Vite app into dist/
+firebase deploy
+firebase functions:log                               # see the AI's startup greeting
+```
+
+**5. React** — use the component from section 4 (`fetch("/api/chat", …)`). For local dev,
+run `firebase emulators:start` and add to `vite.config.ts`:
+
+```ts
+server: { proxy: { "/api": "http://127.0.0.1:5000" } }
+```
+
+Note: Cloud Functions need the Blaze (pay-as-you-go) plan; it has a free monthly allowance.
+
+---
+
 ## 5. Supported services
 
 | Service | Key looks like | Env variable | Default model |
