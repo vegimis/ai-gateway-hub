@@ -47,14 +47,10 @@ export interface ChatStream {
 
 export interface GatewayConfig {
   /**
-   * The provider key(s). Pass a single key or multiple space-separated keys
-   * (e.g. "AIza... sk-... sk-ant-...").
-   * When multiple keys are given, if one key fails or is rate-limited,
-   * the gateway automatically jumps to the next key!
+   * The provider key. Optional: when omitted, the key is read from `env`
+   * (or `process.env`) — see ENV_KEYS for the variable names.
    */
   apiKey?: string | undefined;
-  /** Array of API keys for automatic sequential failover. */
-  apiKeys?: string[] | undefined;
   /** Env object to read keys from, e.g. the Cloudflare Workers `env` binding. */
   env?: Record<string, string | undefined> | undefined;
   /** Skip auto-detection when you already know the provider. */

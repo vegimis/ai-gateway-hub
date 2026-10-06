@@ -1,9 +1,19 @@
 import { detectProvider, detectProviderFromKey } from "./detect";
-import { ENV_KEYS, ENV_MODEL, ENV_PROVIDER, defaultEnv, resolveKeyFromEnv } from "./keys";
-import { DEFAULT_MODELS, PROVIDERS, PROVIDER_IDS, authHeaders, buildRequest, modelsUrl, parseModels } from "./providers";
+import { ENV_KEYS, ENV_MODEL, ENV_PROVIDER, defaultEnv, resolveKeyFromEnv, parseKeys } from "./keys";
+import {
+  DEFAULT_MODELS,
+  PROVIDERS,
+  PROVIDER_IDS,
+  authHeaders,
+  buildRequest,
+  modelsUrl,
+  parseModels,
+  resolveModelForProvider,
+} from "./providers";
 import { sseEvents } from "./stream";
 import {
   AIGatewayError,
+  codeForStatus,
   type ChatOptions,
   type ChatResult,
   type ChatStream,
@@ -12,7 +22,7 @@ import {
 } from "./types";
 
 /** Library version — keep in sync with package.json and the git tag (vX.Y.Z). */
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 
 export { startupCheck, type StartupReport } from "./startup";
 export {
@@ -25,7 +35,9 @@ export {
   PROVIDER_IDS,
   detectProvider,
   detectProviderFromKey,
+  parseKeys,
   resolveKeyFromEnv,
+  resolveModelForProvider,
 };
 export type {
   AIGatewayErrorCode,
@@ -48,107 +60,162 @@ export interface Gateway {
 }
 
 /**
- * Creates a provider-agnostic chat client.
- * Key: `config.apiKey`, else `config.env`, else `process.env` (see ENV_KEYS).
- * Provider and default model are discovered automatically.
+ * Creates a provider-agnostic chat client with automatic multi-key failover.
+ * Supports multiple keys separated by spaces in apiKey or apiKeys array.
+ * If one key/model fails or is quota-limited, it automatically falls through to the next key.
  */
 export function createGateway(config: GatewayConfig = {}): Gateway {
   const fetchImpl = config.fetch ?? fetch;
   const env = config.env ?? defaultEnv();
 
-  let apiKey = config.apiKey?.trim();
+  let rawKeyString = config.apiKey?.trim();
+  let candidateKeys = parseKeys(config.apiKeys ?? rawKeyString);
   let keySource = "config";
+
   const envProvider = env[ENV_PROVIDER]?.trim() as Provider | undefined;
-  let pinned: Provider | undefined =
+  const pinned: Provider | undefined =
     config.provider ?? (envProvider && envProvider in PROVIDERS ? envProvider : undefined);
-  if (!apiKey) {
+
+  if (candidateKeys.length === 0) {
     const found = resolveKeyFromEnv(env);
     if (found) {
-      apiKey = found.apiKey;
+      candidateKeys = parseKeys(found.apiKey);
       keySource = found.source;
-      pinned ??= found.provider;
     }
   }
-  if (!apiKey) {
+
+  if (candidateKeys.length === 0) {
     throw new AIGatewayError(
-      `Missing API key. Pass { apiKey } or set one of: ${ENV_KEYS.map((k) => k.name).join(", ")}.`,
+      `Missing API key. Pass { apiKey } (single or space-separated) or set one of: ${ENV_KEYS.map((k) => k.name).join(", ")}.`,
       401,
       undefined,
       "missing_key",
     );
   }
-  const key = apiKey;
+
   const envModel = env[ENV_MODEL]?.trim() || undefined;
   const maxAttempts = Math.max(1, config.maxAttempts ?? 3);
 
-  const providerPromise: Promise<Provider> = pinned
-    ? Promise.resolve(pinned)
-    : detectProvider(key, fetchImpl);
-  // Avoid unhandled rejections if detection fails before chat() is called.
-  providerPromise.catch(() => {});
+  interface KeyCandidate {
+    key: string;
+    getProvider: () => Promise<Provider>;
+  }
+
+  const candidates: KeyCandidate[] = candidateKeys.map((k, idx) => ({
+    key: k,
+    getProvider: () => (pinned && idx === 0 ? Promise.resolve(pinned) : detectProvider(k, fetchImpl)),
+  }));
+
+  const primaryProviderPromise = candidates[0]!.getProvider();
+  primaryProviderPromise.catch(() => {});
 
   async function chat(options: ChatOptions): Promise<ChatResult | ChatStream> {
-    const provider = await providerPromise;
-    const model = (options.model?.trim() || config.model) ?? envModel ?? DEFAULT_MODELS[provider];
-    const req = buildRequest(provider, key, model, options);
+    const failures: string[] = [];
 
-    // Bounded retry for transient provider overload (429 / 5xx).
-    let res: Response;
-    for (let attempt = 1; ; attempt++) {
-      res = await fetchImpl(req.url, {
-        method: "POST",
-        headers: req.headers,
-        body: JSON.stringify(req.body),
-        ...(options.signal ? { signal: options.signal } : {}),
-      });
-      const transient = res.status === 429 || res.status >= 500;
-      if (!transient || attempt >= maxAttempts) break;
-      await res.body?.cancel().catch(() => {});
-      const retryAfter = Number(res.headers.get("retry-after"));
-      const delay =
-        retryAfter > 0 ? retryAfter * 1000 : 800 * 2 ** (attempt - 1) + Math.random() * 300;
-      await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
-    }
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new AIGatewayError(
-        `${provider} request failed (${res.status}): ${detail.slice(0, 500)}`,
-        res.status,
-        provider,
-      );
-    }
-
-    if (!options.stream) {
-      const json = await res.json();
-      return { provider, model, text: req.parseFull(json) };
-    }
-
-    if (!res.body) {
-      throw new AIGatewayError("Provider returned no stream body.", 502, provider, "no_stream");
-    }
-    const body = res.body;
-
-    async function* textStream() {
-      for await (const data of sseEvents(body)) {
-        if (data === "[DONE]") return;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(data);
-        } catch {
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      if (!candidate) continue;
+      let provider: Provider;
+      try {
+        provider = await candidate.getProvider();
+      } catch (detErr: unknown) {
+        const msg = detErr instanceof Error ? detErr.message : String(detErr);
+        failures.push(`Key #${i + 1} (${candidate.key.slice(0, 8)}...): provider detection failed - ${msg}`);
+        if (i < candidates.length - 1) {
+          console.warn(`[ai-gateway] Key #${i + 1} detection failed. Jumping to next key #${i + 2}...`);
           continue;
         }
-        const delta = req.parseChunk(parsed);
-        if (delta) yield delta;
+        break;
+      }
+
+      const requestedModel = options.model?.trim() || config.model || envModel;
+      const model = resolveModelForProvider(provider, requestedModel);
+      const req = buildRequest(provider, candidate.key, model, options);
+
+      try {
+        let res: Response;
+        for (let attempt = 1; ; attempt++) {
+          res = await fetchImpl(req.url, {
+            method: "POST",
+            headers: req.headers,
+            body: JSON.stringify(req.body),
+            ...(options.signal ? { signal: options.signal } : {}),
+          });
+          const transient = res.status === 429 || res.status >= 500;
+          if (!transient || attempt >= maxAttempts) break;
+          await res.body?.cancel().catch(() => {});
+          const retryAfter = Number(res.headers.get("retry-after"));
+          const delay =
+            retryAfter > 0 ? retryAfter * 1000 : 800 * 2 ** (attempt - 1) + Math.random() * 300;
+          await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
+        }
+
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          throw new AIGatewayError(
+            `${provider} request failed (${res.status}): ${detail.slice(0, 500)}`,
+            res.status,
+            provider,
+            codeForStatus(res.status),
+          );
+        }
+
+        if (!options.stream) {
+          const json = await res.json();
+          return { provider, model, text: req.parseFull(json) };
+        }
+
+        if (!res.body) {
+          throw new AIGatewayError("Provider returned no stream body.", 502, provider, "no_stream");
+        }
+        const body = res.body;
+
+        async function* textStream() {
+          for await (const data of sseEvents(body)) {
+            if (data === "[DONE]") return;
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            const delta = req.parseChunk(parsed);
+            if (delta) yield delta;
+          }
+        }
+
+        return { provider, model, textStream: textStream() };
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        failures.push(`Key #${i + 1} [${provider} / ${model}]: ${errMsg}`);
+        if (i < candidates.length - 1) {
+          console.warn(
+            `[ai-gateway] Key #${i + 1} (${provider}) failed (${errMsg}). Cascading to next key #${i + 2}...`,
+          );
+          continue;
+        }
+        throw new AIGatewayError(
+          candidates.length > 1
+            ? `All ${candidates.length} API keys exhausted:\n` + failures.map((f) => `  • ${f}`).join("\n")
+            : errMsg,
+          err instanceof AIGatewayError ? err.status : 502,
+          provider,
+          err instanceof AIGatewayError ? err.code : "upstream_error",
+        );
       }
     }
 
-    return { provider, model, textStream: textStream() };
+    throw new AIGatewayError(
+      `All ${candidates.length} keys failed to execute:\n` + failures.join("\n"),
+      502,
+      undefined,
+      "upstream_error",
+    );
   }
 
   async function listModels(): Promise<string[]> {
-    const provider = await providerPromise;
-    const res = await fetchImpl(modelsUrl(provider), { headers: authHeaders(provider, key) });
+    const provider = await primaryProviderPromise;
+    const res = await fetchImpl(modelsUrl(provider), { headers: authHeaders(provider, candidateKeys[0] || "") });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       throw new AIGatewayError(`${provider} model list failed (${res.status}): ${detail.slice(0, 300)}`, res.status, provider);
@@ -156,8 +223,9 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
     return parseModels(provider, await res.json()).sort();
   }
 
-  return { provider: providerPromise, keySource, listModels, chat: chat as Gateway["chat"] };
+  return { provider: primaryProviderPromise, keySource, listModels, chat: chat as Gateway["chat"] };
 }
+
 
 type OneShot = ChatOptions & Pick<GatewayConfig, "apiKey" | "env" | "provider" | "fetch">;
 

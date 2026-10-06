@@ -4,7 +4,6 @@ import { z } from "zod";
 import { AIGatewayError, PROVIDER_IDS, createGateway } from "@/lib/ai-gateway";
 
 const Body = z.object({
-  apiKey: z.string().optional(),
   prompt: z.string().min(1),
   systemPrompt: z.string().optional(),
   model: z.string().max(200).optional(),
@@ -27,13 +26,9 @@ export const Route = createFileRoute("/api/chat")({
 
         let gateway: ReturnType<typeof createGateway>;
         try {
-          // Key comes from request body or from env automatically (AI_PROVIDER_API_KEY, AI_API_KEY, ...).
-          gateway = createGateway({
-            ...(input.apiKey ? { apiKey: input.apiKey } : {}),
-            ...(input.provider ? { provider: input.provider as never } : {}),
-          });
+          // Key comes from env automatically (AI_PROVIDER_API_KEY, GEMINI_API_KEY, ...).
+          gateway = createGateway(input.provider ? { provider: input.provider as never } : {});
         } catch {
-
           // Missing configuration is a client-visible setup state, not a server crash.
           return Response.json(
             {
