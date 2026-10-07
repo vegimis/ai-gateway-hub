@@ -95,6 +95,27 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
 
   const envModel = env[ENV_MODEL]?.trim() || undefined;
   const maxAttempts = Math.max(1, config.maxAttempts ?? 3);
+  const timeoutMs = config.timeoutMs ?? 60_000;
+
+  /** fetch that aborts if the provider sends no response headers within timeoutMs (streams may run longer). */
+  async function timedFetch(url: string, init: RequestInit, provider: Provider): Promise<Response> {
+    const ac = new AbortController();
+    const outer = init.signal;
+    const onAbort = () => ac.abort(outer?.reason);
+    if (outer?.aborted) onAbort();
+    outer?.addEventListener("abort", onAbort, { once: true });
+    const timer = timeoutMs > 0 ? setTimeout(() => ac.abort("timeout"), timeoutMs) : undefined;
+    try {
+      return await fetchImpl(url, { ...init, signal: ac.signal });
+    } catch (e) {
+      if (ac.signal.reason === "timeout") {
+        throw new AIGatewayError(`${provider} did not respond within ${timeoutMs}ms.`, 504, provider, "timeout");
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   interface KeyCandidate {
     key: string;
@@ -135,12 +156,16 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
       try {
         let res: Response;
         for (let attempt = 1; ; attempt++) {
-          res = await fetchImpl(req.url, {
-            method: "POST",
-            headers: req.headers,
-            body: JSON.stringify(req.body),
-            ...(options.signal ? { signal: options.signal } : {}),
-          });
+          res = await timedFetch(
+            req.url,
+            {
+              method: "POST",
+              headers: req.headers,
+              body: JSON.stringify(req.body),
+              ...(options.signal ? { signal: options.signal } : {}),
+            },
+            provider,
+          );
           const transient = res.status === 429 || res.status >= 500;
           if (!transient || attempt >= maxAttempts) break;
           await res.body?.cancel().catch(() => {});
@@ -186,6 +211,8 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
 
         return { provider, model, textStream: textStream() };
       } catch (err: unknown) {
+        // A cancelled request must not cascade to the next key.
+        if (options.signal?.aborted) throw err;
         const errMsg = err instanceof Error ? err.message : String(err);
         failures.push(`Key #${i + 1} [${provider} / ${model}]: ${errMsg}`);
         if (i < candidates.length - 1) {

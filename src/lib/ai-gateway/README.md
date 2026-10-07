@@ -17,7 +17,7 @@ your code.
 
 ## 1. Install — pinned to a version from GitHub
 
-The library is versioned with git tags (`v1.1.0`, `v1.2.0`, …). Pin the tag so your apps
+The library is versioned with git tags (`v1.2.0`, `v1.2.0`, …). Pin the tag so your apps
 never change unexpectedly.
 
 ### Step 1 (once): give the library its own repo
@@ -27,11 +27,11 @@ this folder** in it (the `package.json` must be at the repo root):
 
 ```bash
 cp -r src/lib/ai-gateway /tmp/ai-gateway && cd /tmp/ai-gateway
-git init && git add . && git commit -m "v1.1.0"
+git init && git add . && git commit -m "v1.2.0"
 git branch -M main
 git remote add origin https://github.com/your-name/ai-gateway.git
 git push -u origin main
-git tag v1.1.0 && git push origin v1.1.0
+git tag v1.2.0 && git push origin v1.2.0
 ```
 
 Rename `"name"` in `package.json` from `@your-name/ai-gateway` to your own scope first.
@@ -39,19 +39,19 @@ Rename `"name"` in `package.json` from `@your-name/ai-gateway` to your own scope
 ### Step 2: install in any app, with the version
 
 ```bash
-npm  install github:your-name/ai-gateway#v1.1.0
-pnpm add     github:your-name/ai-gateway#v1.1.0
-bun  add     github:your-name/ai-gateway#v1.1.0
-yarn add     github:your-name/ai-gateway#v1.1.0
+npm  install github:your-name/ai-gateway#v1.2.0
+pnpm add     github:your-name/ai-gateway#v1.2.0
+bun  add     github:your-name/ai-gateway#v1.2.0
+yarn add     github:your-name/ai-gateway#v1.2.0
 ```
 
 `package.json` then contains:
 
 ```json
-"dependencies": { "@your-name/ai-gateway": "github:your-name/ai-gateway#v1.1.0" }
+"dependencies": { "@your-name/ai-gateway": "github:your-name/ai-gateway#v1.2.0" }
 ```
 
-Private repo? Use `git+ssh://git@github.com/your-name/ai-gateway.git#v1.1.0`.
+Private repo? Use `git+ssh://git@github.com/your-name/ai-gateway.git#v1.2.0`.
 
 ### Upgrade / release a new version
 
@@ -80,7 +80,7 @@ No GitHub needed: `cp -r src/lib/ai-gateway your-app/src/lib/` and import from `
 
 ```bash
 AI_PROVIDER_API_KEY=your-key   # any service, auto-detected
-AI_PROVIDER_MODEL=gpt-6-luna   # optional: force a model
+AI_PROVIDER_MODEL=gpt-5-mini   # optional: force a model
 AI_PROVIDER=mistral            # optional: force the service
 ```
 
@@ -94,8 +94,16 @@ Service-specific names also work (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC
 | Cloudflare | `wrangler secret put AI_PROVIDER_API_KEY` |
 | Lovable | Project secrets |
 
+**Several keys (failover):** separate them with spaces, commas or new lines —
+`AI_PROVIDER_API_KEY="AIza… gsk_… sk-ant-…"` or `createGateway({ apiKeys: [k1, k2] })`.
+If one key fails (quota, outage, bad key) the next one is tried, even across services.
+
+> Never name the key `VITE_…` — Vite puts every `VITE_` variable into the browser bundle.
+
 **b) Env object** (Workers, tests): `createGateway({ env })`
 **c) Directly** (user brings own key): `createGateway({ apiKey: userKey })`
+**Timeout:** `createGateway({ timeoutMs: 30_000 })` — a hanging service fails fast (and fails over to the next key).
+
 **d) Pinned**: `createGateway({ apiKey, provider: "anthropic", model: "claude-haiku-4-5" })`
 
 ---
@@ -109,7 +117,7 @@ import { chat, createGateway, startupCheck } from "@your-name/ai-gateway";
 const { text, provider, model } = await chat({ prompt: "Hello" });
 
 // Manual model
-await chat({ prompt: "Hello", model: "gpt-6-luna" });
+await chat({ prompt: "Hello", model: "gpt-5-mini" });
 
 // Streaming
 const { textStream } = await chat({ systemPrompt: "Be brief.", prompt: "Explain DNS", stream: true });
@@ -130,7 +138,7 @@ await ai.chat({ messages: [{ role: "user", content: "Hi" }], signal: ac.signal }
 | --- | --- |
 | `prompt` / `messages` | Question or full history |
 | `systemPrompt` | Instructions |
-| `model` | Empty = automatic |
+| `model` | Empty = automatic. A model from another service (e.g. `gpt-5` on a Gemini key) falls back to that service's default |
 | `temperature`, `maxTokens` | Optional |
 | `stream` | `true` → `{ textStream }` |
 | `signal` | `AbortSignal` |
@@ -206,7 +214,7 @@ my-app/
 
 ```bash
 cd functions
-npm install github:your-name/ai-gateway#v1.1.0 esbuild
+npm install github:your-name/ai-gateway#v1.2.0 esbuild
 ```
 
 The library ships TypeScript source, so bundle the function with esbuild
@@ -291,7 +299,7 @@ Note: Cloud Functions need the Blaze (pay-as-you-go) plan; it has a free monthly
 | Service | Key looks like | Env variable | Default model |
 | --- | --- | --- | --- |
 | Google Gemini | `AIza…` / `AQ.…` | `GEMINI_API_KEY` | `gemini-flash-latest` |
-| OpenAI | `sk-…` / `sk-proj-…` | `OPENAI_API_KEY` | `gpt-6-luna` |
+| OpenAI | `sk-…` / `sk-proj-…` | `OPENAI_API_KEY` | `gpt-5-mini` |
 | Anthropic Claude | `sk-ant-…` | `ANTHROPIC_API_KEY` | `claude-haiku-4-5` |
 | Groq | `gsk_…` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
 | xAI Grok | `xai-…` | `XAI_API_KEY` | `grok-4.5` |
@@ -303,7 +311,7 @@ Note: Cloud Functions need the Blaze (pay-as-you-go) plan; it has a free monthly
 | DeepSeek | probed | `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | Together AI | probed | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` |
 
-Add a service: one entry in `PROVIDERS` (`providers.ts`).
+Add a service: one entry in `PROVIDERS` (`providers.ts`) — label, base URL, default model, key prefixes, env name and optional model `family` pattern.
 
 ---
 
@@ -330,6 +338,7 @@ Every failure throws `AIGatewayError` (`status`, `provider`, `code`, `retryable`
 | `not_found` | Unknown model (404) |
 | `rate_limited` | Quota (429) |
 | `overloaded` | Busy (503/529) |
+| `timeout` | No answer within `timeoutMs` (default 60 s) |
 | `upstream_error` | Other failure |
 | `no_stream` | No stream returned |
 
