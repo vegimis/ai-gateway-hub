@@ -12,6 +12,12 @@ export interface ProviderInfo {
   defaultModel: string;
   /** Key prefixes that identify this provider (checked longest-first). */
   prefixes: string[];
+  /**
+   * Model-name pattern this provider serves. A requested model that does not
+   * match falls back to `defaultModel` (e.g. "gpt-5" sent to a Gemini key).
+   * Omit for multi-vendor hosts (OpenRouter, Groq, Together, ...) that accept any id.
+   */
+  family?: RegExp;
   /** Env var that pins this provider. */
   envKey: string;
 }
@@ -21,7 +27,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: "Google Gemini",
     kind: "google",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    defaultModel: "gemini-3.6-flash",
+    defaultModel: "gemini-flash-latest",
+    family: /gemini|gemma|learnlm/i,
     prefixes: ["AIza", "AQ."],
     envKey: "GEMINI_API_KEY",
   },
@@ -29,7 +36,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: "OpenAI",
     kind: "openai",
     baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-4o-mini",
+    defaultModel: "gpt-5-mini",
+    family: /^(gpt|o\d|chatgpt|text-|codex)/i,
     prefixes: ["sk-proj-", "sk-svcacct-", "sk-"],
     envKey: "OPENAI_API_KEY",
   },
@@ -37,7 +45,8 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: "Anthropic Claude",
     kind: "anthropic",
     baseUrl: "https://api.anthropic.com/v1",
-    defaultModel: "claude-3-5-sonnet-latest",
+    defaultModel: "claude-haiku-4-5",
+    family: /claude/i,
     prefixes: ["sk-ant-"],
     envKey: "ANTHROPIC_API_KEY",
   },
@@ -54,6 +63,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     kind: "openai",
     baseUrl: "https://api.x.ai/v1",
     defaultModel: "grok-4.5",
+    family: /grok/i,
     prefixes: ["xai-"],
     envKey: "XAI_API_KEY",
   },
@@ -95,6 +105,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     kind: "openai",
     baseUrl: "https://api.mistral.ai/v1",
     defaultModel: "mistral-small-latest",
+    family: /mistral|ministral|codestral|pixtral|magistral|devstral|open-/i,
     prefixes: [],
     envKey: "MISTRAL_API_KEY",
   },
@@ -103,6 +114,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     kind: "openai",
     baseUrl: "https://api.deepseek.com/v1",
     defaultModel: "deepseek-chat",
+    family: /deepseek/i,
     prefixes: [],
     envKey: "DEEPSEEK_API_KEY",
   },
@@ -123,47 +135,16 @@ export const DEFAULT_MODELS = Object.fromEntries(
 ) as Record<Provider, string>;
 
 /**
- * Resolves a model name appropriate for the given provider.
- * If the user's requested model belongs to another provider (e.g. gemini vs gpt),
- * it gracefully selects that provider's default model instead of crashing with 404!
+ * Picks the model for a provider: the requested one when it belongs to that
+ * provider's family (or the provider hosts any vendor), otherwise its default.
+ * Never rewrites a valid model id — unknown ids surface as `not_found`.
  */
 export function resolveModelForProvider(provider: Provider, requestedModel?: string): string {
-  if (!requestedModel) return DEFAULT_MODELS[provider];
-  const req = requestedModel.toLowerCase();
-  if (provider === "google") {
-    // If user asked for gemini-2.5 or older retired models, upgrade to gemini-3.6-flash
-    if (req.includes("gemini-2.5") || req.includes("gemini-2.0") || req.includes("gemini-1.5")) {
-      return "gemini-3.6-flash";
-    }
-    if (req.includes("gemini") || req.includes("flash") || req.includes("pro")) {
-      return requestedModel;
-    }
-    return DEFAULT_MODELS[provider];
-  }
-  if (provider === "openai" && (req.includes("gpt") || req.includes("o1") || req.includes("o3") || req.includes("text-"))) {
-    return requestedModel;
-  }
-  if (provider === "anthropic" && req.includes("claude")) {
-    return requestedModel;
-  }
-  if (provider === "groq" && (req.includes("llama") || req.includes("mixtral") || req.includes("gemma"))) {
-    return requestedModel;
-  }
-  if (provider === "xai" && req.includes("grok")) {
-    return requestedModel;
-  }
-  if (provider === "deepseek" && req.includes("deepseek")) {
-    return requestedModel;
-  }
-  if (provider === "mistral" && req.includes("mistral")) {
-    return requestedModel;
-  }
-  if (provider === "openrouter") {
-    return requestedModel;
-  }
-  return DEFAULT_MODELS[provider];
+  const req = requestedModel?.trim();
+  if (!req) return DEFAULT_MODELS[provider];
+  const family = PROVIDERS[provider].family;
+  return !family || family.test(req) ? req : DEFAULT_MODELS[provider];
 }
-
 
 export interface ProviderRequest {
   url: string;

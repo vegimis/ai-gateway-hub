@@ -186,6 +186,8 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
 
         return { provider, model, textStream: textStream() };
       } catch (err: unknown) {
+        // A cancelled request must not cascade to the next key.
+        if (options.signal?.aborted) throw err;
         const errMsg = err instanceof Error ? err.message : String(err);
         failures.push(`Key #${i + 1} [${provider} / ${model}]: ${errMsg}`);
         if (i < candidates.length - 1) {

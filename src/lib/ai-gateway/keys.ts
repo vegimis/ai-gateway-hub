@@ -11,13 +11,12 @@ export const ENV_KEYS: ReadonlyArray<{ name: string; provider?: Provider }> = [
   { name: "AI_PROVIDER_API_KEY" },
   { name: "AI_GATEWAY_API_KEY" },
   { name: "AI_API_KEY" },
-  { name: "VITE_AI_API_KEY" },
   ...PROVIDER_IDS.map((p) => ({ name: PROVIDERS[p].envKey, provider: p })),
   { name: "GOOGLE_API_KEY", provider: "google" as const },
   { name: "GOOGLE_GENERATIVE_AI_API_KEY", provider: "google" as const },
 ];
 
-/** Optional env override for the model, e.g. AI_PROVIDER_MODEL=gpt-6-luna. */
+/** Optional env override for the model, e.g. AI_PROVIDER_MODEL=gpt-5-mini. */
 export const ENV_MODEL = "AI_PROVIDER_MODEL";
 /** Optional env override to pin the provider, e.g. AI_PROVIDER=mistral. */
 export const ENV_PROVIDER = "AI_PROVIDER";
