@@ -62,6 +62,8 @@ export interface GatewayConfig {
   model?: string | undefined;
   /** Max attempts for 429/5xx responses (default 3, set 1 to disable retries). */
   maxAttempts?: number | undefined;
+  /** Abort if the provider sends no response within this time (default 60000 ms, 0 = off). */
+  timeoutMs?: number | undefined;
   fetch?: typeof fetch | undefined;
 }
 
@@ -73,6 +75,7 @@ export type AIGatewayErrorCode =
   | "not_found"
   | "rate_limited"
   | "overloaded"
+  | "timeout"
   | "upstream_error"
   | "no_stream";
 
@@ -100,6 +103,6 @@ export class AIGatewayError extends Error {
 
   /** True when trying again later may succeed (rate limit / overload / 5xx). */
   get retryable(): boolean {
-    return this.code === "rate_limited" || this.code === "overloaded" || (this.status ?? 0) >= 500;
+    return this.code === "rate_limited" || this.code === "overloaded" || this.code === "timeout" || (this.status ?? 0) >= 500;
   }
 }

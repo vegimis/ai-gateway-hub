@@ -102,6 +102,8 @@ If one key fails (quota, outage, bad key) the next one is tried, even across ser
 
 **b) Env object** (Workers, tests): `createGateway({ env })`
 **c) Directly** (user brings own key): `createGateway({ apiKey: userKey })`
+**Timeout:** `createGateway({ timeoutMs: 30_000 })` — a hanging service fails fast (and fails over to the next key).
+
 **d) Pinned**: `createGateway({ apiKey, provider: "anthropic", model: "claude-haiku-4-5" })`
 
 ---
@@ -336,6 +338,7 @@ Every failure throws `AIGatewayError` (`status`, `provider`, `code`, `retryable`
 | `not_found` | Unknown model (404) |
 | `rate_limited` | Quota (429) |
 | `overloaded` | Busy (503/529) |
+| `timeout` | No answer within `timeoutMs` (default 60 s) |
 | `upstream_error` | Other failure |
 | `no_stream` | No stream returned |
 
