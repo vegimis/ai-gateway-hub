@@ -64,6 +64,11 @@ export interface GatewayConfig {
   maxAttempts?: number | undefined;
   /** Abort if the provider sends no response within this time (default 60000 ms, 0 = off). */
   timeoutMs?: number | undefined;
+  /**
+   * When no model is set and the built-in default is retired (404), fetch the
+   * provider's live model list and switch to the newest suitable one (default true).
+   */
+  discoverModels?: boolean | undefined;
   fetch?: typeof fetch | undefined;
 }
 

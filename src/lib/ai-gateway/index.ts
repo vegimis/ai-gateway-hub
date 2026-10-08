@@ -150,29 +150,24 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
       }
 
       const requestedModel = options.model?.trim() || config.model || envModel;
-      const model = resolveModelForProvider(provider, requestedModel);
-      const req = buildRequest(provider, candidate.key, model, options);
+      let model = requestedModel
+        ? resolveModelForProvider(provider, requestedModel)
+        : (discovered.get(provider) ?? DEFAULT_MODELS[provider]);
+      let req = buildRequest(provider, candidate.key, model, options);
 
       try {
-        let res: Response;
-        for (let attempt = 1; ; attempt++) {
-          res = await timedFetch(
-            req.url,
-            {
-              method: "POST",
-              headers: req.headers,
-              body: JSON.stringify(req.body),
-              ...(options.signal ? { signal: options.signal } : {}),
-            },
-            provider,
-          );
-          const transient = res.status === 429 || res.status >= 500;
-          if (!transient || attempt >= maxAttempts) break;
+        let res = await send(req, provider);
+
+        // Default model retired? Ask the provider what exists now and use the newest fit.
+        if (res.status === 404 && !requestedModel && config.discoverModels !== false) {
           await res.body?.cancel().catch(() => {});
-          const retryAfter = Number(res.headers.get("retry-after"));
-          const delay =
-            retryAfter > 0 ? retryAfter * 1000 : 800 * 2 ** (attempt - 1) + Math.random() * 300;
-          await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
+          const next = await discoverModel(provider, candidate.key).catch(() => undefined);
+          if (next && next !== model) {
+            console.warn(`[ai-gateway] ${provider}: "${model}" unavailable, switching to "${next}".`);
+            model = next;
+            req = buildRequest(provider, candidate.key, model, options);
+            res = await send(req, provider);
+          }
         }
 
         if (!res.ok) {
