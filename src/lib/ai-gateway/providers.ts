@@ -135,6 +135,38 @@ export const DEFAULT_MODELS = Object.fromEntries(
 ) as Record<Provider, string>;
 
 /**
+ * Patterns for the "fast, low-cost, general chat" tier of each provider, best first.
+ * Used to auto-pick the newest model from the live /models list, so future
+ * releases (gemini-4-flash, gpt-6-mini, claude-haiku-5, ...) are found without a library update.
+ */
+export const MODEL_PREFERENCES: Partial<Record<Provider, RegExp[]>> = {
+  google: [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/, /^gemini-[\d.]+-flash/],
+  openai: [/^gpt-[\d.]+-mini$/, /^gpt-[\d.]+o?-mini/],
+  anthropic: [/^claude-haiku-[\d-]+$/, /^claude-[\d-]+-haiku/, /^claude-sonnet-[\d-]+$/],
+  xai: [/^grok-[\d.]+-fast/, /^grok-[\d.]+$/],
+  mistral: [/^mistral-small-latest$/, /^mistral-small/],
+  deepseek: [/^deepseek-chat$/],
+};
+
+const NON_CHAT = /preview|exp|audio|realtime|tts|image|vision|embed|transcribe|search|guard|moderation|instruct-v0/i;
+
+/**
+ * Chooses the best default model from a live model list: the newest match of
+ * the provider's preference patterns, else the static default if listed, else the first chat model.
+ */
+export function pickModel(provider: Provider, models: string[]): string {
+  const usable = models.filter((m) => !NON_CHAT.test(m));
+  const byNewest = (a: string, b: string) => b.localeCompare(a, "en", { numeric: true });
+  for (const pattern of MODEL_PREFERENCES[provider] ?? []) {
+    const hit = usable.filter((m) => pattern.test(m)).sort(byNewest)[0];
+    if (hit) return hit;
+  }
+  const fallback = DEFAULT_MODELS[provider];
+  if (models.includes(fallback)) return fallback;
+  return usable[0] ?? fallback;
+}
+
+/**
  * Picks the model for a provider: the requested one when it belongs to that
  * provider's family (or the provider hosts any vendor), otherwise its default.
  * Never rewrites a valid model id — unknown ids surface as `not_found`.
