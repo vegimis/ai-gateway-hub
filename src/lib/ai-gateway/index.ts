@@ -191,7 +191,7 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
       let req = buildRequest(provider, candidate.key, model, options);
 
       try {
-        let res = await send(req, provider);
+        let res = await send(req, provider, options.signal);
 
         // Default model retired? Ask the provider what exists now and use the newest fit.
         if (res.status === 404 && !requestedModel && config.discoverModels !== false) {
@@ -201,7 +201,7 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
             console.warn(`[ai-gateway] ${provider}: "${model}" unavailable, switching to "${next}".`);
             model = next;
             req = buildRequest(provider, candidate.key, model, options);
-            res = await send(req, provider);
+            res = await send(req, provider, options.signal);
           }
         }
 
