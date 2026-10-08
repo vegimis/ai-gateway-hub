@@ -4,15 +4,20 @@ import { z } from "zod";
 import { AIGatewayError, PROVIDER_IDS, createGateway } from "@/lib/ai-gateway";
 
 const Body = z.object({
-  apiKey: z.string().optional(),
-  prompt: z.string().min(1),
-  systemPrompt: z.string().optional(),
+  apiKey: z.string().max(4000).optional(),
+  prompt: z.string().min(1).max(32_000).optional(),
+  messages: z
+    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(32_000) }))
+    .min(1)
+    .max(100)
+    .optional(),
+  systemPrompt: z.string().max(16_000).optional(),
   model: z.string().max(200).optional(),
   provider: z.enum(PROVIDER_IDS as [string, ...string[]]).optional(),
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().positive().optional(),
   stream: z.boolean().optional(),
-});
+}).refine((b) => b.prompt || b.messages, { message: "prompt or messages is required" });
 
 export const Route = createFileRoute("/api/chat")({
   server: {
@@ -45,7 +50,9 @@ export const Route = createFileRoute("/api/chat")({
           );
         }
 
-        const { provider: _p, ...opts } = input;
+        const { provider: _p, apiKey: _k, ...rest } = input;
+        // Cancel the upstream AI call when the client disconnects.
+        const opts = { ...rest, signal: request.signal };
         try {
           if (!input.stream) {
             const result = await gateway.chat({ ...opts, stream: false });
@@ -62,6 +69,7 @@ export const Route = createFileRoute("/api/chat")({
                 }
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
               } catch (error) {
+                if (request.signal.aborted) return controller.close();
                 const message = error instanceof Error ? error.message : "Stream failed";
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`));
               } finally {

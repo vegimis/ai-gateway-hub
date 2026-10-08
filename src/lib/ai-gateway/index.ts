@@ -23,6 +23,11 @@ import {
   type Provider,
 } from "./types";
 
+/** Never expose more than the first 4 chars of a key in logs or errors. */
+function maskKey(key: string): string {
+  return `${key.slice(0, 4)}…`;
+}
+
 /** Library version — keep in sync with package.json and the git tag (vX.Y.Z). */
 export const VERSION = "1.3.0";
 
@@ -128,10 +133,21 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
     getProvider: () => Promise<Provider>;
   }
 
-  const candidates: KeyCandidate[] = candidateKeys.map((k, idx) => ({
-    key: k,
-    getProvider: () => (pinned && idx === 0 ? Promise.resolve(pinned) : detectProvider(k, fetchImpl)),
-  }));
+  /** Detection runs once per key; a failed probe is retried on the next call. */
+  const candidates: KeyCandidate[] = candidateKeys.map((k, idx) => {
+    let cached: Promise<Provider> | undefined;
+    return {
+      key: k,
+      getProvider: () => {
+        if (pinned && idx === 0) return Promise.resolve(pinned);
+        cached ??= detectProvider(k, fetchImpl).catch((e) => {
+          cached = undefined;
+          throw e;
+        });
+        return cached;
+      },
+    };
+  });
 
   const primaryProviderPromise = candidates[0]!.getProvider();
   primaryProviderPromise.catch(() => {});
@@ -182,7 +198,7 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
         provider = await candidate.getProvider();
       } catch (detErr: unknown) {
         const msg = detErr instanceof Error ? detErr.message : String(detErr);
-        failures.push(`Key #${i + 1} (${candidate.key.slice(0, 8)}...): provider detection failed - ${msg}`);
+        failures.push(`Key #${i + 1} (${maskKey(candidate.key)}): provider detection failed - ${msg}`);
         if (i < candidates.length - 1) {
           console.warn(`[ai-gateway] Key #${i + 1} detection failed. Jumping to next key #${i + 2}...`);
           continue;
