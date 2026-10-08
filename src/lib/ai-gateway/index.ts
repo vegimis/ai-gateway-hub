@@ -2,12 +2,14 @@ import { detectProvider, detectProviderFromKey } from "./detect";
 import { ENV_KEYS, ENV_MODEL, ENV_PROVIDER, defaultEnv, resolveKeyFromEnv, parseKeys } from "./keys";
 import {
   DEFAULT_MODELS,
+  MODEL_PREFERENCES,
   PROVIDERS,
   PROVIDER_IDS,
   authHeaders,
   buildRequest,
   modelsUrl,
   parseModels,
+  pickModel,
   resolveModelForProvider,
 } from "./providers";
 import { sseEvents } from "./stream";
@@ -22,7 +24,7 @@ import {
 } from "./types";
 
 /** Library version — keep in sync with package.json and the git tag (vX.Y.Z). */
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
 
 export { startupCheck, type StartupReport } from "./startup";
 export {
@@ -31,11 +33,13 @@ export {
   ENV_KEYS,
   ENV_MODEL,
   ENV_PROVIDER,
+  MODEL_PREFERENCES,
   PROVIDERS,
   PROVIDER_IDS,
   detectProvider,
   detectProviderFromKey,
   parseKeys,
+  pickModel,
   resolveKeyFromEnv,
   resolveModelForProvider,
 };
@@ -55,6 +59,8 @@ export interface Gateway {
   readonly keySource: string;
   /** Lists the chat models this key can use (live from the provider). */
   listModels(): Promise<string[]>;
+  /** Newest fast/cheap chat model from the live list; also becomes this gateway's default. */
+  latestModel(): Promise<string>;
   chat(options: ChatOptions & { stream: true }): Promise<ChatStream>;
   chat(options: ChatOptions & { stream?: false }): Promise<ChatResult>;
 }
@@ -271,16 +277,14 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
   }
 
   async function listModels(): Promise<string[]> {
-    const provider = await primaryProviderPromise;
-    const res = await fetchImpl(modelsUrl(provider), { headers: authHeaders(provider, candidateKeys[0] || "") });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new AIGatewayError(`${provider} model list failed (${res.status}): ${detail.slice(0, 300)}`, res.status, provider);
-    }
-    return parseModels(provider, await res.json()).sort();
+    return fetchModels(await primaryProviderPromise, candidateKeys[0] || "");
   }
 
-  return { provider: primaryProviderPromise, keySource, listModels, chat: chat as Gateway["chat"] };
+  async function latestModel(): Promise<string> {
+    return discoverModel(await primaryProviderPromise, candidateKeys[0] || "");
+  }
+
+  return { provider: primaryProviderPromise, keySource, listModels, latestModel, chat: chat as Gateway["chat"] };
 }
 
 
