@@ -130,6 +130,41 @@ export function createGateway(config: GatewayConfig = {}): Gateway {
   const primaryProviderPromise = candidates[0]!.getProvider();
   primaryProviderPromise.catch(() => {});
 
+  /** provider → model auto-discovered from the live list (per gateway instance). */
+  const discovered = new Map<Provider, string>();
+
+  async function fetchModels(provider: Provider, key: string): Promise<string[]> {
+    const res = await timedFetch(modelsUrl(provider), { headers: authHeaders(provider, key) }, provider);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new AIGatewayError(`${provider} model list failed (${res.status}): ${detail.slice(0, 300)}`, res.status, provider);
+    }
+    return parseModels(provider, await res.json()).sort();
+  }
+
+  async function discoverModel(provider: Provider, key: string): Promise<string> {
+    const model = pickModel(provider, await fetchModels(provider, key));
+    discovered.set(provider, model);
+    return model;
+  }
+
+  /** POST with retries on 429/5xx (exponential backoff, honours Retry-After). */
+  async function send(req: ReturnType<typeof buildRequest>, provider: Provider, signal?: AbortSignal): Promise<Response> {
+    for (let attempt = 1; ; attempt++) {
+      const res = await timedFetch(
+        req.url,
+        { method: "POST", headers: req.headers, body: JSON.stringify(req.body), ...(signal ? { signal } : {}) },
+        provider,
+      );
+      const transient = res.status === 429 || res.status >= 500;
+      if (!transient || attempt >= maxAttempts) return res;
+      await res.body?.cancel().catch(() => {});
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const delay = retryAfter > 0 ? retryAfter * 1000 : 800 * 2 ** (attempt - 1) + Math.random() * 300;
+      await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
+    }
+  }
+
   async function chat(options: ChatOptions): Promise<ChatResult | ChatStream> {
     const failures: string[] = [];
 
