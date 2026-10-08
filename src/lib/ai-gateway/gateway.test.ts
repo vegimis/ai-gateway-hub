@@ -15,7 +15,7 @@ describe("gateway", () => {
 
   it("fails over to the second key when the first is rejected", async () => {
     const fetch = (async (_u: string, init: RequestInit) =>
-      String((init.headers as Record<string, string>).Authorization).includes("gsk_bad")
+      String((init.headers as Record<string, string>)["Authorization"]).includes("gsk_bad")
         ? json({}, 401)
         : json(ok)) as typeof globalThis.fetch;
     const g = createGateway({ apiKey: "gsk_bad gsk_good", fetch, maxAttempts: 1 });
