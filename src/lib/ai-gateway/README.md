@@ -17,7 +17,7 @@ your code.
 
 ## 1. Install — pinned to a version from GitHub
 
-The library is versioned with git tags (`v1.2.0`, `v1.2.0`, …). Pin the tag so your apps
+The library is versioned with git tags (`v1.3.0`, `v1.3.0`, …). Pin the tag so your apps
 never change unexpectedly.
 
 ### Step 1 (once): give the library its own repo
@@ -27,11 +27,11 @@ this folder** in it (the `package.json` must be at the repo root):
 
 ```bash
 cp -r src/lib/ai-gateway /tmp/ai-gateway && cd /tmp/ai-gateway
-git init && git add . && git commit -m "v1.2.0"
+git init && git add . && git commit -m "v1.3.0"
 git branch -M main
 git remote add origin https://github.com/your-name/ai-gateway.git
 git push -u origin main
-git tag v1.2.0 && git push origin v1.2.0
+git tag v1.3.0 && git push origin v1.3.0
 ```
 
 Rename `"name"` in `package.json` from `@your-name/ai-gateway` to your own scope first.
@@ -39,27 +39,27 @@ Rename `"name"` in `package.json` from `@your-name/ai-gateway` to your own scope
 ### Step 2: install in any app, with the version
 
 ```bash
-npm  install github:your-name/ai-gateway#v1.2.0
-pnpm add     github:your-name/ai-gateway#v1.2.0
-bun  add     github:your-name/ai-gateway#v1.2.0
-yarn add     github:your-name/ai-gateway#v1.2.0
+npm  install github:your-name/ai-gateway#v1.3.0
+pnpm add     github:your-name/ai-gateway#v1.3.0
+bun  add     github:your-name/ai-gateway#v1.3.0
+yarn add     github:your-name/ai-gateway#v1.3.0
 ```
 
 `package.json` then contains:
 
 ```json
-"dependencies": { "@your-name/ai-gateway": "github:your-name/ai-gateway#v1.2.0" }
+"dependencies": { "@your-name/ai-gateway": "github:your-name/ai-gateway#v1.3.0" }
 ```
 
-Private repo? Use `git+ssh://git@github.com/your-name/ai-gateway.git#v1.2.0`.
+Private repo? Use `git+ssh://git@github.com/your-name/ai-gateway.git#v1.3.0`.
 
 ### Upgrade / release a new version
 
 ```bash
 # in the library repo: change code, bump "version" in package.json + VERSION in index.ts + CHANGELOG
-git commit -am "v1.2.0" && git tag v1.2.0 && git push && git push origin v1.2.0
+git commit -am "v1.3.0" && git tag v1.3.0 && git push && git push origin v1.3.0
 # in each app
-npm install github:your-name/ai-gateway#v1.2.0
+npm install github:your-name/ai-gateway#v1.3.0
 ```
 
 Check the running version: `import { VERSION } from "@your-name/ai-gateway"`.
@@ -214,7 +214,7 @@ my-app/
 
 ```bash
 cd functions
-npm install github:your-name/ai-gateway#v1.2.0 esbuild
+npm install github:your-name/ai-gateway#v1.3.0 esbuild
 ```
 
 The library ships TypeScript source, so bundle the function with esbuild
@@ -347,3 +347,24 @@ Every failure throws `AIGatewayError` (`status`, `provider`, `code`, `retryable`
 Covers text chat (assistants, summaries, chat widgets). Not included: images, embeddings,
 speech, tool calling. Keep keys server-side, never commit `.env`, add auth / rate limits to
 your endpoint before going public.
+
+## Future models (auto-discovery)
+
+Providers retire and release models constantly. The gateway handles this for you:
+
+| Situation | What happens |
+|---|---|
+| You set a model (`model`, `AI_MODEL`) | Used exactly as given — never rewritten. |
+| No model set | Built-in default is used (`DEFAULT_MODELS`). |
+| No model set **and** the default returns 404 (retired) | The gateway fetches the provider's live `/models` list, picks the newest fast/cheap chat model, logs `switching to "…"`, retries, and remembers it. |
+
+```ts
+const ai = createGateway();
+await ai.listModels();   // every model your key can use, live from the provider
+await ai.latestModel();  // e.g. "gemini-4-flash" — and it becomes this gateway's default
+```
+
+- The "tier" it picks is defined by `MODEL_PREFERENCES` in `providers.ts` (regex list per provider, best first; newest version wins, `10` > `9`). Edit it to prefer e.g. `pro`/`sonnet` models instead.
+- Preview / experimental / audio / image / embedding models are skipped.
+- Opt out with `createGateway({ discoverModels: false })`.
+- Tests: `bunx vitest run src/lib/ai-gateway`.
